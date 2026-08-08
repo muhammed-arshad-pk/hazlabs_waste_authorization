@@ -70,6 +70,18 @@
   select.district-select{font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;padding:8px 10px;border:1px solid var(--hairline-strong);
     border-radius:var(--radius);background:var(--bg);color:var(--ink);min-width:190px;}
 
+  .sortbar{display:flex;align-items:center;gap:14px;margin-left:auto;}
+  #clearFiltersBtn{margin-top:22px;}
+
+  /* ---------- Pagination ---------- */
+  .pagination-bar{display:flex;align-items:center;justify-content:center;gap:16px;margin:18px 0 4px;}
+  .page-btn{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.05em;color:var(--ink);
+    background:var(--paper);border:1px solid var(--hairline-strong);border-radius:var(--radius);
+    padding:7px 14px;cursor:pointer;transition:border-color .12s,color .12s;}
+  .page-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent);}
+  .page-btn:disabled{opacity:0.35;cursor:not-allowed;}
+  .page-label{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);}
+
   /* ---------- Searchable multi-select combobox ---------- */
   .combo{position:relative;width:340px;}
   .combo-input-wrap{display:flex;flex-wrap:wrap;gap:5px;align-items:center;border:1px solid var(--hairline-strong);
@@ -94,7 +106,7 @@
   .combo-all-row:hover{background:var(--accent-soft);}
 
   /* ---------- Sort toggle ---------- */
-  .sortbar{display:flex;align-items:center;gap:14px;margin-left:auto;}
+
   .switch-row{display:flex;align-items:center;gap:9px;}
   .switch{position:relative;width:42px;height:22px;border-radius:100px;background:var(--hairline-strong);cursor:pointer;transition:background 0.15s;flex-shrink:0;}
   .switch.on{background:var(--accent);}
@@ -240,23 +252,17 @@
         </div>
       </div>
 
-      <div class="filter-group">
-        <div class="filter-label">&nbsp;</div>
-        <button class="btn-ghost" id="clearFiltersBtn" type="button">✕ Clear filters</button>
-      </div>
-
       <div class="sortbar">
         <div class="filter-group">
           <div class="filter-label">Sort by quantity</div>
           <div class="switch-row">
-            <div class="switch" id="sortSwitch"><div class="knob"></div></div>
-            <span class="switch-label" id="sortSwitchLabel">Off</span>
-            <div class="dir-toggle" id="dirToggle">
-              <div class="dir-btn active" data-dir="asc">▲ ASC</div>
-              <div class="dir-btn" data-dir="desc">▼ DESC</div>
+            <div class="dir-toggle enabled" id="dirToggle">
+              <div class="dir-btn" data-dir="asc">▲ ASC</div>
+              <div class="dir-btn active" data-dir="desc">▼ DESC</div>
             </div>
           </div>
         </div>
+        <button class="btn-ghost" id="clearFiltersBtn" type="button">Clear filters</button>
       </div>
     </div>
 
@@ -264,6 +270,12 @@
 
     <div id="ledgerHead"></div>
     <div id="ledgerBody"><div class="loading">Loading…</div></div>
+
+    <div class="pagination-bar" id="paginationBar">
+      <button class="page-btn" id="prevPageBtn" type="button">‹ Previous</button>
+      <span class="page-label" id="pageLabel">Page 1</span>
+      <button class="page-btn" id="nextPageBtn" type="button">Next ›</button>
+    </div>
   </div>
 
 </div>
@@ -279,7 +291,12 @@ const CONFIG = {
   SUPABASE_URL: "https://ontkucydrfgdebcifvlo.supabase.co",                    // e.g. "https://ontkucydrfgdebcifvlo.supabase.co"
   SUPABASE_PUBLISHABLE_KEY: "sb_publishable_FBI491-VUACEXoDiQezPsQ_xoMxrvO3",        // e.g. "sb_publishable_xxxxxxxx"
 };
-const MAX_ROWS = 5000;
+// Supabase/PostgREST projects enforce a server-side "Max Rows" cap (commonly 1000) that
+// silently truncates ANY single request to that ceiling, no matter what range is asked
+// for. Requesting up to 5001 rows per page meant every response was quietly capped well
+// below MAX_ROWS, so "rows.length > MAX_ROWS" was never true and Next stayed disabled
+// forever. Paging in chunks of 1000 keeps every request under that ceiling.
+const MAX_ROWS = 1000;
 
 if(!CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_PUBLISHABLE_KEY){
   document.getElementById("configError").hidden = false;
@@ -359,7 +376,7 @@ let DISTRICTS = [];
 let companies = [];       // built fresh per data fetch, grouped for rendering
 let bootstrapped = false;
 
-let state = { district:"ALL", categories:new Set(), sortOn:false, sortDir:"asc",
+let state = { district:"ALL", categories:new Set(), sortDir:"desc", page:0, hasNextPage:false,
   openCompanies:new Set(), openApps:new Set() };
 
 function splitCategory(raw){
@@ -373,22 +390,34 @@ let refreshCategoryUI = () => {}; // reassigned once setupCombo() runs
 
 // Loads the category pool for the given district ("ALL" = every category site-wide,
 // otherwise only categories that actually occur in that district's rows).
-// "ALL" uses the precomputed category_options table (a full distinct list — pulling
-// this from v_waste_status directly risks missing categories if the table has more
-// rows than our fetch cap). Per-district pulls straight from v_waste_status, since
-// every row there already carries its district and that table is known-good.
+// Pulled directly from v_waste_status (the same table the results list uses) rather
+// than a separate lookup table, since every row there already carries its district —
+// this avoids depending on a second table staying in sync.
+// Paginated (rather than a single .limit(MAX_ROWS) call) so that when ALL districts
+// is selected, every distinct category is captured even if the table holds more rows
+// than MAX_ROWS — otherwise categories that only appear past the cutoff would silently
+// go missing from the dropdown.
 async function loadCategories(district){
-  const { data: catRows, error: catErr } = district === "ALL"
-    ? await sb.from("category_options").select("category")
-    : await sb.from("v_waste_status").select("category").eq("district", district).limit(MAX_ROWS);
+  const PAGE_SIZE = 1000;
+  let allRows = [];
+  let offset = 0;
+  while(true){
+    let q = sb.from("v_waste_status").select("category");
+    if(district !== "ALL") q = q.eq("district", district);
+    const { data: page, error: catErr } = await q.range(offset, offset + PAGE_SIZE - 1);
 
-  if(catErr){
-    console.error("category load error", catErr);
-    document.getElementById("catInput").placeholder = "Error loading categories — see console";
-    return;
+    if(catErr){
+      console.error("category load error", catErr);
+      document.getElementById("catInput").placeholder = "Error loading categories — see console";
+      return;
+    }
+
+    allRows = allRows.concat(page || []);
+    if(!page || page.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
   }
 
-  CATEGORY_POOL = [...new Set((catRows || []).map(r => r.category))].sort()
+  CATEGORY_POOL = [...new Set(allRows.map(r => r.category))].sort()
     .map(c => ({ raw: c, ...splitCategory(c) }));
 
   // Remember every category we've ever seen (site-wide) so a category the user already
@@ -414,6 +443,7 @@ async function bootstrapApp(){
     DISTRICTS.map(d => `<option value="${d}">${d}</option>`).join("");
   districtSelect.addEventListener("change", async e => {
     state.district = e.target.value;
+    state.page = 0;
     await loadCategories(state.district);
     fetchAndRender();
   });
@@ -421,22 +451,10 @@ async function bootstrapApp(){
   setupCombo();
   setupSortToggle();
   setupClearFilters();
+  setupPagination();
 
   await loadCategories("ALL");
   await fetchAndRender();
-}
-
-/* ---------------- Clear filters ---------------- */
-function setupClearFilters(){
-  const clearBtn = document.getElementById("clearFiltersBtn");
-  const districtSelect = document.getElementById("districtSelect");
-  clearBtn.addEventListener("click", async ()=>{
-    state.district = "ALL";
-    districtSelect.value = "ALL";
-    state.categories.clear();
-    await loadCategories("ALL");
-    fetchAndRender();
-  });
 }
 
 /* ---------------- Searchable multi-select combobox ---------------- */
@@ -472,6 +490,7 @@ function setupCombo(){
       btn.addEventListener("click", e=>{
         e.stopPropagation();
         state.categories.delete(decodeURIComponent(btn.dataset.remove));
+        state.page = 0;
         renderTags(); fetchAndRender();
       });
     });
@@ -487,12 +506,14 @@ function setupCombo(){
       opt.addEventListener("click", ()=>{
         const raw = decodeURIComponent(opt.dataset.raw);
         if(state.categories.has(raw)) state.categories.delete(raw); else state.categories.add(raw);
+        state.page = 0;
         renderTags(); renderDropdown(); fetchAndRender();
       });
     });
   }
   catAllRow.addEventListener("click", ()=>{
     currentMatches().forEach(c=>state.categories.add(c.raw));
+    state.page = 0;
     renderTags(); renderDropdown(); fetchAndRender();
   });
   refreshCategoryUI = () => { renderTags(); renderDropdown(); };
@@ -502,19 +523,9 @@ function setupCombo(){
   renderTags(); renderDropdown();
 }
 
-/* ---------------- Sort toggle ---------------- */
+/* ---------------- Sort direction toggle ---------------- */
 function setupSortToggle(){
-  const sortSwitch = document.getElementById("sortSwitch");
-  const sortSwitchLabel = document.getElementById("sortSwitchLabel");
   const dirToggle = document.getElementById("dirToggle");
-  sortSwitch.addEventListener("click", ()=>{
-    state.sortOn = !state.sortOn;
-    sortSwitch.classList.toggle("on", state.sortOn);
-    sortSwitchLabel.textContent = state.sortOn ? "On" : "Off";
-    sortSwitchLabel.classList.toggle("on", state.sortOn);
-    dirToggle.classList.toggle("enabled", state.sortOn);
-    render();
-  });
   dirToggle.querySelectorAll(".dir-btn").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       state.sortDir = btn.dataset.dir;
@@ -525,24 +536,97 @@ function setupSortToggle(){
   });
 }
 
+/* ---------------- Pagination controls ---------------- */
+function setupPagination(){
+  document.getElementById("prevPageBtn").addEventListener("click", ()=>{
+    if(state.page === 0) return;
+    state.page -= 1;
+    document.getElementById("ledgerBody").scrollIntoView({behavior:"smooth", block:"start"});
+    fetchAndRender();
+  });
+  document.getElementById("nextPageBtn").addEventListener("click", ()=>{
+    if(!state.hasNextPage) return;
+    state.page += 1;
+    document.getElementById("ledgerBody").scrollIntoView({behavior:"smooth", block:"start"});
+    fetchAndRender();
+  });
+}
+
+/* ---------------- Clear filters ---------------- */
+function setupClearFilters(){
+  const btn = document.getElementById("clearFiltersBtn");
+  btn.addEventListener("click", async ()=>{
+    state.district = "ALL";
+    state.categories.clear();
+    state.sortDir = "desc";
+    state.page = 0;
+    state.openCompanies.clear();
+    state.openApps.clear();
+
+    document.getElementById("districtSelect").value = "ALL";
+
+    const dirToggle = document.getElementById("dirToggle");
+    dirToggle.querySelectorAll(".dir-btn").forEach(b=>{
+      b.classList.toggle("active", b.dataset.dir === "desc");
+    });
+
+    await loadCategories("ALL");   // also calls refreshCategoryUI() to clear tags
+    await fetchAndRender();
+  });
+}
+
 /* ---------------- Fetch + group rows from Supabase ---------------- */
 async function fetchAndRender(){
   const ledgerBody = document.getElementById("ledgerBody");
   ledgerBody.innerHTML = `<div class="loading">Loading…</div>`;
 
+  const allCategoriesSelected = CATEGORY_POOL.length > 0 &&
+    CATEGORY_POOL.every(c => state.categories.has(c.raw));
+
+  // Fetch one page (exactly MAX_ROWS rows) at a time rather than looping through the whole
+  // table — looping was reliable but re-fetched everything on every filter change, which
+  // made the app feel like it was "continuously loading". Requesting MORE than the server's
+  // row cap (e.g. MAX_ROWS+1, to detect a next page) doesn't work either — the server just
+  // silently truncates back down to its own cap, so that extra row never actually arrives.
+  // Instead: request exactly MAX_ROWS rows, and treat a full page as a signal that a next
+  // page might exist. If Next is ever clicked past the real last page, the fetch below comes
+  // back empty and self-corrects by stepping back and disabling Next.
+  const offset = state.page * MAX_ROWS;
   let query = sb.from("v_waste_status").select("*");
   if(state.district !== "ALL") query = query.eq("district", state.district);
-  if(state.categories.size > 0) query = query.in("category", [...state.categories]);
+  // If every category currently available is selected (e.g. via "Select all matches"),
+  // that's equivalent to no category filter at all — skip the .in() clause in that case.
+  // Sending all 335 category names as URL query params (especially combined with ALL
+  // districts) can build a request URL long enough for the server to reject it outright,
+  // which is what was causing the earlier "loading error".
+  if(state.categories.size > 0 && !allCategoriesSelected){
+    query = query.in("category", [...state.categories]);
+  }
 
-  const { data: rows, error } = await query.limit(MAX_ROWS);
+  const { data: rawRows, error } = await query.range(offset, offset + MAX_ROWS - 1); // exactly MAX_ROWS rows
+
   if(error){
     ledgerBody.innerHTML = `<div class="empty">Error loading data: ${error.message}</div>`;
     console.error(error);
     return;
   }
 
-  companies = groupRows(rows || []);
-  window.__lastRowCount = (rows || []).length;
+  const rows = rawRows || [];
+
+  // Self-correction: if Next was clicked past the actual last page, this page comes back
+  // empty. Step back to the previous page, mark it as the last page, and refetch it —
+  // instead of leaving the user stuck looking at a blank page.
+  if(rows.length === 0 && state.page > 0){
+    state.page -= 1;
+    state.hasNextPage = false;
+    return fetchAndRender();
+  }
+
+  state.hasNextPage = rows.length === MAX_ROWS;
+  const pageRows = rows;
+
+  companies = groupRows(pageRows);
+  window.__lastRowCount = pageRows.length;
   render();
 }
 
@@ -579,7 +663,22 @@ function groupRows(rows){
   return [...byCompany.values()].map(c => ({...c, applications: [...c.applications.values()]}));
 }
 
-function filteredCompanies(){ return companies; }
+function companyQtyTotal(c){
+  return c.applications.reduce((s,a)=>s+a.items.reduce((s2,i)=>{
+    const v = (i.normalized === null || i.normalized === undefined) ? 0 : i.normalized;
+    return s2+v;
+  },0),0);
+}
+
+function filteredCompanies(){
+  const sorted = [...companies];
+  sorted.sort((a,b)=>{
+    const av = companyQtyTotal(a);
+    const bv = companyQtyTotal(b);
+    return state.sortDir === "asc" ? av - bv : bv - av;
+  });
+  return sorted;
+}
 
 /* ---------------- Render ---------------- */
 const ledgerHead = document.getElementById("ledgerHead");
@@ -597,48 +696,55 @@ function legendHtml(){
 function render(){
   const data = filteredCompanies();
   const noteBase = document.getElementById("sortNote");
-  const capNote = window.__lastRowCount === MAX_ROWS
-    ? ` <span class="cap-warn">Capped at ${MAX_ROWS} rows — narrow the filters.</span>` : "";
 
-  if(state.sortOn){
-    const rowsFlatCount = data.reduce((s,c)=>s+c.applications.reduce((s2,a)=>s2+a.items.length,0),0);
-    noteBase.innerHTML = `${rowsFlatCount} items, ranked ${state.sortDir==="asc"?"ascending":"descending"} by quantity within unit group.${capNote} ${legendHtml()}`;
-    ledgerHead.innerHTML = `<div class="flat-head">
-      <span>Category</span><span>Company</span><span>Application no.</span><span class="align-r">Quantity</span><span>Unit group</span>
-    </div>`;
-    let rowsFlat = data.flatMap(c => c.applications.flatMap(a => a.items.map(i => ({...i, company:c, app:a}))));
-    rowsFlat.sort((a,b)=>{
-      const av = (a.normalized === null || a.normalized === undefined) ? -Infinity : a.normalized;
-      const bv = (b.normalized === null || b.normalized === undefined) ? -Infinity : b.normalized;
-      return state.sortDir === "asc" ? av - bv : bv - av;
-    });
-    ledgerBody.innerHTML = rowsFlat.length ? rowsFlat.map(r => `
-      <div class="flat-row">
-        <div class="flat-cat">${r.category.code?`<span class="cat-code">${r.category.code}</span>`:""}${r.category.name}</div>
-        <div class="flat-company">${r.company.name} · ${r.company.district}</div>
-        <div class="flat-app">${r.app.appNo}</div>
-        <div class="flat-qty">${r.normalized===null||r.normalized===undefined? "—" : r.normalized}<div class="flat-unit">${r.unit}</div></div>
-        <div><span class="grp-badge grp-${r.group}">${GROUP_LABEL[r.group] || r.group}</span></div>
-      </div>
-    `).join("") : `<div class="empty">No items match the current filters.</div>`;
-    return;
-  }
+  const rangeStart = state.page * MAX_ROWS + 1;
+  const rangeEnd = state.page * MAX_ROWS + window.__lastRowCount;
+  const rangeNote = window.__lastRowCount > 0
+    ? `<span class="cap-warn">Showing rows ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()}${state.hasNextPage ? " (more available — use Next)" : ""}.</span> `
+    : "";
 
-  const companyCount = data.length;
-  const appCount = data.reduce((s,c)=>s+c.applications.length,0);
-  noteBase.innerHTML = `${companyCount} companies · ${appCount} applications.${capNote} ${legendHtml()}`;
+  noteBase.innerHTML = `${rangeNote}${legendHtml()}`;
   ledgerHead.innerHTML = `<div class="ledger-head">
     <span>Company</span><span>District</span><span>Applications</span><span class="align-r">Items</span><span></span>
   </div>`;
+
+  renderPagination();
 
   if(!data.length){ ledgerBody.innerHTML = `<div class="empty">No companies match the current filters.</div>`; return; }
   ledgerBody.innerHTML = data.map(renderCompany).join("");
   attachHandlers();
 }
 
+function renderPagination(){
+  const bar = document.getElementById("paginationBar");
+  const prevBtn = document.getElementById("prevPageBtn");
+  const nextBtn = document.getElementById("nextPageBtn");
+  const label = document.getElementById("pageLabel");
+  prevBtn.disabled = state.page === 0;
+  nextBtn.disabled = !state.hasNextPage;
+  label.textContent = `Page ${state.page + 1}`;
+}
+
+function itemQty(i){
+  return (i.normalized === null || i.normalized === undefined) ? -Infinity : i.normalized;
+}
+function appQtyTotal(a){
+  return a.items.reduce((s,i)=>{
+    const v = (i.normalized === null || i.normalized === undefined) ? 0 : i.normalized;
+    return s+v;
+  },0);
+}
+function sortByDir(arr, keyFn){
+  return [...arr].sort((a,b)=>{
+    const av = keyFn(a), bv = keyFn(b);
+    return state.sortDir === "asc" ? av - bv : bv - av;
+  });
+}
+
 function renderCompany(c){
   const open = state.openCompanies.has(c.id);
   const itemCount = c.applications.reduce((s,a)=>s+a.items.length,0);
+  const sortedApps = sortByDir(c.applications, appQtyTotal);
   return `
   <div class="company ${open?'open':''}" data-company="${c.id}">
     <div class="company-row" data-toggle-company="${c.id}">
@@ -648,12 +754,13 @@ function renderCompany(c){
       <div class="qty-total">${itemCount} items</div>
       <div class="caret">▸</div>
     </div>
-    <div class="apps-wrap">${c.applications.map(a => renderApp(c.id, a)).join("")}</div>
+    <div class="apps-wrap">${sortedApps.map(a => renderApp(c.id, a)).join("")}</div>
   </div>`;
 }
 function renderApp(companyId, app){
   const key = companyId+"-"+app.appNo;
   const open = state.openApps.has(key);
+  const sortedItems = sortByDir(app.items, itemQty);
   return `
   <div class="app ${open?'open':''}" data-app="${key}">
     <div class="app-row" data-toggle-app="${key}">
@@ -667,7 +774,7 @@ function renderApp(companyId, app){
       <table class="items-table">
         <thead><tr><th>Category</th><th class="align-r">Quantity</th><th>Unit</th></tr></thead>
         <tbody>
-          ${app.items.map(i => `
+          ${sortedItems.map(i => `
             <tr>
               <td>${i.category.code?`<span class="cat-code">${i.category.code}</span>`:""}${i.category.name}<span class="grp-badge grp-${i.group}">${GROUP_LABEL[i.group] || i.group}</span></td>
               <td class="align-r">${i.quantity===null||i.quantity===undefined?"—":i.quantity}</td>
