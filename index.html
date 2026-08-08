@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haz Labs — Waste Authorization Ledger</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --bg:#0A0D0C;
+    --paper:#141918;
+    --paper-2:#1B211F;
+    --ink:#ECF2EF;
+    --ink-soft:#8CA098;
+    --hairline:#232B29;
+    --hairline-strong:#333F3B;
+    --accent:#4FE3B8;
+    --accent-soft:rgba(79,227,184,0.14);
+    --hazard:#E8FF5B;
+    --green-ink:#57E39B; --green-soft:rgba(87,227,155,0.16);
+    --rust:#FF6E5C; --rust-soft:rgba(255,110,92,0.16);
+    --grey-ink:#93A39B; --grey-soft:rgba(147,163,155,0.14);
+    --mass:#6FA8FF; --mass-soft:rgba(111,168,255,0.16);
+    --vol:#C79CFF; --vol-soft:rgba(199,156,255,0.16);
+    --onetime:#F2B84C; --onetime-soft:rgba(242,184,76,0.16);
+    --unspec:#93A39B; --unspec-soft:rgba(147,163,155,0.14);
+    --radius:2px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:'IBM Plex Sans',sans-serif;-webkit-font-smoothing:antialiased;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  .page{max-width:1120px;margin:0 auto;padding:36px 28px 80px;}
+
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--hazard);margin:0 0 10px;}
+  h1.title{font-family:'Big Shoulders Display',sans-serif;font-size:42px;font-weight:800;letter-spacing:0.01em;
+    text-transform:uppercase;margin:0 0 18px;color:var(--ink);line-height:1;}
+
+  /* ---------- Signature hazard-stripe divider ---------- */
+  .hazard-rule{height:5px;border:0;margin:0 0 22px;border-radius:1px;
+    background:repeating-linear-gradient(135deg, var(--hazard) 0 14px, var(--bg) 14px 28px);
+    opacity:0.9;}
+
+  /* ---------- Login screen ---------- */
+  .login-wrap{max-width:380px;margin:100px auto;padding:34px 32px;background:var(--paper);
+    border:1px solid var(--hairline-strong);border-radius:var(--radius);}
+  .login-wrap h1.title{font-size:26px;margin-bottom:4px;}
+  .login-wrap .subhead{margin:0 0 24px;font-size:13px;color:var(--ink-soft);}
+  .field{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
+  .field label{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-soft);}
+  .field input{font-family:'IBM Plex Sans',sans-serif;font-size:14px;padding:10px 12px;border:1px solid var(--hairline-strong);
+    border-radius:var(--radius);background:var(--bg);color:var(--ink);}
+  .field input:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .btn-primary{width:100%;font-family:'IBM Plex Sans',sans-serif;font-size:14px;font-weight:600;padding:11px;
+    background:var(--accent);color:#04211A;border:none;border-radius:var(--radius);cursor:pointer;transition:background .12s;}
+  .btn-primary:hover{background:#6BEFC7;}
+  .btn-primary:disabled{background:var(--hairline-strong);color:var(--ink-soft);cursor:not-allowed;}
+  .login-error{font-size:12.5px;color:var(--rust);margin-top:2px;min-height:16px;}
+  .signed-in-bar{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-bottom:6px;font-size:12.5px;color:var(--ink-soft);}
+  .btn-ghost{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.05em;color:var(--ink-soft);
+    background:none;border:1px solid var(--hairline-strong);border-radius:var(--radius);padding:5px 10px;cursor:pointer;}
+  .btn-ghost:hover{border-color:var(--rust);color:var(--rust);}
+
+  /* ---------- Filter bar ---------- */
+  .filterbar{background:var(--paper);border:1px solid var(--hairline-strong);border-radius:var(--radius);
+    padding:16px 18px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start;position:relative;}
+  .filter-group{display:flex;flex-direction:column;gap:8px;}
+  .filter-label{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-soft);}
+  select.district-select{font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;padding:8px 10px;border:1px solid var(--hairline-strong);
+    border-radius:var(--radius);background:var(--bg);color:var(--ink);min-width:190px;}
+
+  /* ---------- Searchable multi-select combobox ---------- */
+  .combo{position:relative;width:340px;}
+  .combo-input-wrap{display:flex;flex-wrap:wrap;gap:5px;align-items:center;border:1px solid var(--hairline-strong);
+    border-radius:var(--radius);background:var(--bg);padding:5px 6px;min-height:36px;}
+  .combo-tag{display:flex;align-items:center;gap:5px;background:var(--accent-soft);color:var(--accent);
+    font-size:11.5px;padding:3px 7px;border-radius:100px;white-space:nowrap;}
+  .combo-tag button{border:none;background:none;color:var(--accent);cursor:pointer;font-size:12px;line-height:1;padding:0;font-weight:700;}
+  .combo-tag-unavailable{background:var(--rust-soft);color:var(--rust);}
+  .combo-tag-unavailable button{color:var(--rust);}
+  .combo-input{flex:1;min-width:90px;border:none;outline:none;font-size:13px;padding:4px 4px;font-family:'IBM Plex Sans',sans-serif;
+    background:transparent;color:var(--ink);}
+  .combo-dropdown{position:absolute;top:calc(100% + 4px);left:0;width:100%;max-height:260px;overflow-y:auto;
+    background:var(--paper-2);border:1px solid var(--hairline-strong);border-radius:var(--radius);
+    box-shadow:0 10px 24px rgba(0,0,0,0.45);z-index:20;display:none;}
+  .combo.open .combo-dropdown{display:block;}
+  .combo-option{padding:8px 12px;font-size:12.5px;cursor:pointer;display:flex;justify-content:space-between;gap:8px;}
+  .combo-option:hover{background:var(--accent-soft);}
+  .combo-option.selected{background:#20302B;}
+  .combo-option .code{font-family:'IBM Plex Mono',monospace;color:var(--accent);font-size:11px;flex-shrink:0;}
+  .combo-empty{padding:10px 12px;font-size:12px;color:var(--ink-soft);}
+  .combo-all-row{padding:8px 12px;font-size:12px;font-weight:600;color:var(--ink);border-bottom:1px solid var(--hairline);cursor:pointer;}
+  .combo-all-row:hover{background:var(--accent-soft);}
+
+  /* ---------- Sort toggle ---------- */
+  .sortbar{display:flex;align-items:center;gap:14px;margin-left:auto;}
+  .switch-row{display:flex;align-items:center;gap:9px;}
+  .switch{position:relative;width:42px;height:22px;border-radius:100px;background:var(--hairline-strong);cursor:pointer;transition:background 0.15s;flex-shrink:0;}
+  .switch.on{background:var(--accent);}
+  .switch .knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--bg);transition:left 0.15s;box-shadow:0 1px 2px rgba(0,0,0,0.4);}
+  .switch.on .knob{left:22px;}
+  .switch-label{font-size:12.5px;color:var(--ink-soft);font-weight:500;}
+  .switch-label.on{color:var(--ink);}
+  .dir-toggle{display:flex;border:1px solid var(--hairline-strong);border-radius:var(--radius);overflow:hidden;opacity:0.4;pointer-events:none;transition:opacity .15s;}
+  .dir-toggle.enabled{opacity:1;pointer-events:auto;}
+  .dir-btn{padding:5px 10px;font-size:12px;background:var(--bg);color:var(--ink-soft);cursor:pointer;font-family:'IBM Plex Mono',monospace;}
+  .dir-btn.active{background:var(--accent);color:#04211A;}
+
+  .sort-note{font-size:11.5px;color:var(--ink-soft);max-width:820px;margin:10px 0 18px;line-height:1.5;}
+  .unit-legend{display:inline-flex;gap:12px;flex-wrap:wrap;margin-left:8px;}
+  .unit-legend span{display:inline-flex;align-items:center;gap:4px;font-size:11px;}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+  .cap-warn{color:var(--hazard);font-weight:600;}
+
+  /* ---------- Ledger (hierarchical view) ---------- */
+  .ledger-head{display:grid;grid-template-columns:2.4fr 1.1fr 0.9fr 1fr 28px;padding:0 14px 8px;gap:10px;
+    font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-soft);
+    border-bottom:1px solid var(--hairline-strong);}
+  .align-r{text-align:right;}
+  .company{border-bottom:1px solid var(--hairline);}
+  .company-row{display:grid;grid-template-columns:2.4fr 1.1fr 0.9fr 1fr 28px;align-items:center;gap:10px;padding:14px 14px;
+    cursor:pointer;background:var(--paper);transition:background 0.12s;}
+  .company-row:hover{background:var(--paper-2);}
+  .company-name{font-size:14.5px;font-weight:600;color:var(--ink);}
+  .company-address{font-size:11.5px;color:var(--ink-soft);margin-top:2px;font-weight:400;}
+  .district-tag{font-size:12px;color:var(--ink-soft);}
+  .app-count{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-soft);}
+  .qty-total{font-family:'IBM Plex Mono',monospace;font-size:12.5px;text-align:right;color:var(--ink);}
+  .caret{text-align:right;color:var(--ink-soft);transition:transform 0.15s;font-size:12px;}
+  .company.open .caret{transform:rotate(90deg);color:var(--accent);}
+  .apps-wrap{display:none;background:var(--bg);}
+  .company.open .apps-wrap{display:block;}
+  .app{border-top:1px solid var(--hairline);margin-left:28px;}
+  .app-row{display:grid;grid-template-columns:1.1fr 1fr 1fr 0.9fr 22px;align-items:center;gap:10px;padding:11px 14px 11px 10px;cursor:pointer;}
+  .app-row:hover{background:var(--paper-2);}
+  .app-no{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--accent);}
+  .app-no .lbl{color:var(--ink-soft);margin-right:5px;font-family:'IBM Plex Sans',sans-serif;}
+  .date-field{font-size:12px;color:var(--ink-soft);}
+  .date-field .lbl{display:block;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:0.08em;text-transform:uppercase;color:#5C6E67;margin-bottom:2px;}
+  .date-val{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink);}
+  .stamp{display:inline-flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.08em;
+    padding:3px 8px;border:1.5px solid;border-radius:2px;font-weight:600;white-space:nowrap;}
+  .stamp.active{color:var(--green-ink);border-color:var(--green-ink);background:var(--green-soft);}
+  .stamp.expired{color:var(--rust);border-color:var(--rust);background:var(--rust-soft);}
+  .stamp.unknown{color:var(--grey-ink);border-color:var(--grey-ink);background:var(--grey-soft);}
+  .app-caret{text-align:right;color:var(--ink-soft);font-size:11px;transition:transform 0.15s;}
+  .app.open .app-caret{transform:rotate(90deg);color:var(--accent);}
+  .items-wrap{display:none;background:var(--paper);margin-left:20px;border-left:2px solid var(--hairline-strong);}
+  .app.open .items-wrap{display:block;}
+  table.items-table{width:100%;border-collapse:collapse;}
+  table.items-table th{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.07em;text-transform:uppercase;
+    color:var(--ink-soft);text-align:left;padding:8px 10px 6px;border-bottom:1px solid var(--hairline);}
+  table.items-table th.align-r{text-align:right;}
+  table.items-table td{font-size:12.5px;padding:7px 10px;border-bottom:1px solid var(--hairline);color:var(--ink);}
+  table.items-table td.align-r{text-align:right;font-family:'IBM Plex Mono',monospace;}
+  .cat-code{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent);margin-right:6px;}
+  .grp-badge{display:inline-block;font-size:9.5px;font-family:'IBM Plex Mono',monospace;padding:1px 6px;border-radius:2px;margin-left:6px;vertical-align:middle;}
+  .grp-mass{background:var(--mass-soft);color:var(--mass);}
+  .grp-volume{background:var(--vol-soft);color:var(--vol);}
+  .grp-onetime{background:var(--onetime-soft);color:var(--onetime);}
+  .grp-unspecified{background:var(--unspec-soft);color:var(--unspec);}
+
+  /* ---------- Flat sorted view ---------- */
+  .flat-head{display:grid;grid-template-columns:1.5fr 1.5fr 1.3fr 1fr 0.9fr;padding:0 14px 8px;gap:10px;
+    font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-soft);
+    border-bottom:1px solid var(--hairline-strong);}
+  .flat-row{display:grid;grid-template-columns:1.5fr 1.5fr 1.3fr 1fr 0.9fr;align-items:center;gap:10px;padding:11px 14px;
+    border-bottom:1px solid var(--hairline);background:var(--paper);}
+  .flat-row:hover{background:var(--paper-2);}
+  .flat-cat{font-size:13px;}
+  .flat-company{font-size:12.5px;color:var(--ink-soft);}
+  .flat-app{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);}
+  .flat-qty{font-family:'IBM Plex Mono',monospace;font-size:13px;text-align:right;}
+  .flat-unit{font-size:11px;color:var(--ink-soft);}
+
+  .empty{padding:40px 14px;text-align:center;color:var(--ink-soft);font-size:13px;background:var(--paper);}
+  .loading{padding:40px 14px;text-align:center;color:var(--ink-soft);font-size:13px;}
+  .config-error{max-width:640px;margin:80px auto;padding:24px 26px;background:var(--rust-soft);border:1px solid var(--rust);
+    border-radius:var(--radius);color:var(--ink);font-size:13.5px;line-height:1.6;}
+  .config-error code{background:var(--paper-2);padding:1px 5px;border-radius:2px;font-family:'IBM Plex Mono',monospace;font-size:12px;}
+  [hidden]{display:none !important;}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ======================= CONFIG ERROR (shown if credentials not filled in) ======================= -->
+  <div id="configError" class="config-error" hidden>
+    <b>Supabase credentials not set.</b><br><br>
+    Open this file and fill in <code>SUPABASE_URL</code> and <code>SUPABASE_PUBLISHABLE_KEY</code>
+    near the top of the <code>&lt;script&gt;</code> block (search for <code>CONFIG</code>) —
+    use the <b>publishable/anon</b> key only, never the secret key.
+  </div>
+
+  <!-- ======================= LOGIN SCREEN ======================= -->
+  <div id="loginWrap" class="login-wrap" hidden>
+    <div class="eyebrow">Haz Labs</div>
+    <h1 class="title">Sign in</h1>
+    <p class="subhead">Waste Authorization Ledger — internal access.</p>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="loginEmail" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="loginPassword" autocomplete="current-password">
+    </div>
+    <div class="login-error" id="loginError"></div>
+    <button class="btn-primary" id="loginBtn">Sign in</button>
+  </div>
+
+  <!-- ======================= MAIN APP ======================= -->
+  <div id="appWrap" hidden>
+    <div class="signed-in-bar">
+      <span id="userEmail" style="color:var(--ink)"></span>
+      <button class="btn-ghost" id="signOutBtn">Sign out</button>
+    </div>
+
+    <div class="eyebrow">Haz Labs</div>
+    <h1 class="title">Waste Authorization Ledger</h1>
+    <hr class="hazard-rule">
+
+    <div class="filterbar">
+      <div class="filter-group">
+        <div class="filter-label">District</div>
+        <select class="district-select" id="districtSelect"><option value="ALL">Loading…</option></select>
+      </div>
+
+      <div class="filter-group">
+        <div class="filter-label">Waste category</div>
+        <div class="combo" id="catCombo">
+          <div class="combo-input-wrap" id="catInputWrap">
+            <input class="combo-input" id="catInput" placeholder="Search…" autocomplete="off">
+          </div>
+          <div class="combo-dropdown" id="catDropdown">
+            <div class="combo-all-row" id="catAllRow">Select all matches</div>
+            <div id="catOptionsList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <div class="filter-label">&nbsp;</div>
+        <button class="btn-ghost" id="clearFiltersBtn" type="button">✕ Clear filters</button>
+      </div>
+
+      <div class="sortbar">
+        <div class="filter-group">
+          <div class="filter-label">Sort by quantity</div>
+          <div class="switch-row">
+            <div class="switch" id="sortSwitch"><div class="knob"></div></div>
+            <span class="switch-label" id="sortSwitchLabel">Off</span>
+            <div class="dir-toggle" id="dirToggle">
+              <div class="dir-btn active" data-dir="asc">▲ ASC</div>
+              <div class="dir-btn" data-dir="desc">▼ DESC</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sort-note" id="sortNote"></div>
+
+    <div id="ledgerHead"></div>
+    <div id="ledgerBody"><div class="loading">Loading…</div></div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+/* ==================================================================
+   CONFIG — fill these in from Supabase → Project Settings → API Keys.
+   Use the PUBLISHABLE (anon) key only. Never put the secret key here;
+   this file is a static page anyone with the URL can view the source of.
+   ================================================================== */
+const CONFIG = {
+  SUPABASE_URL: "https://ontkucydrfgdebcifvlo.supabase.co",                    // e.g. "https://ontkucydrfgdebcifvlo.supabase.co"
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_FBI491-VUACEXoDiQezPsQ_xoMxrvO3",        // e.g. "sb_publishable_xxxxxxxx"
+};
+const MAX_ROWS = 5000;
+
+if(!CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_PUBLISHABLE_KEY){
+  document.getElementById("configError").hidden = false;
+  throw new Error("Supabase credentials not set — see CONFIG block.");
+}
+
+const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_PUBLISHABLE_KEY);
+
+const GROUP_LABEL = {mass:"mass", volume:"volume", onetime:"one-time", unspecified:"unspecified"};
+
+/* ---------------- Elements ---------------- */
+const loginWrap = document.getElementById("loginWrap");
+const appWrap = document.getElementById("appWrap");
+const loginEmail = document.getElementById("loginEmail");
+const loginPassword = document.getElementById("loginPassword");
+const loginError = document.getElementById("loginError");
+const loginBtn = document.getElementById("loginBtn");
+const userEmail = document.getElementById("userEmail");
+
+/* ---------------- Auth flow ---------------- */
+async function showAppFor(session){
+  loginWrap.hidden = true;
+  appWrap.hidden = false;
+  userEmail.textContent = session.user.email;
+  await bootstrapApp();
+}
+
+async function checkSession(){
+  const { data: { session } } = await sb.auth.getSession();
+  if(session){
+    showAppFor(session);
+  } else {
+    loginWrap.hidden = false;
+  }
+}
+
+loginBtn.addEventListener("click", async ()=>{
+  loginError.textContent = "";
+  loginBtn.disabled = true;
+  loginBtn.textContent = "Signing in…";
+  const { data, error } = await sb.auth.signInWithPassword({
+    email: loginEmail.value.trim(),
+    password: loginPassword.value,
+  });
+  loginBtn.disabled = false;
+  loginBtn.textContent = "Sign in";
+  if(error){
+    loginError.textContent = "Incorrect email or password.";
+    return;
+  }
+  showAppFor(data.session);
+});
+[loginEmail, loginPassword].forEach(el=>{
+  el.addEventListener("keydown", e=>{ if(e.key === "Enter") loginBtn.click(); });
+});
+
+document.getElementById("signOutBtn").addEventListener("click", async ()=>{
+  await sb.auth.signOut();
+  appWrap.hidden = true;
+  loginWrap.hidden = false;
+  loginEmail.value = "";
+  loginPassword.value = "";
+});
+
+checkSession();
+
+/* ==================================================================
+   Everything below only runs once signed in (bootstrapApp is called
+   from showAppFor). RLS on waste_authorizations means an unauth'd
+   query would return nothing anyway — this is belt-and-suspenders.
+   ================================================================== */
+
+let CATEGORY_POOL = [];   // [{code, name, raw}] — options valid for the CURRENT district (drives the dropdown)
+let CATEGORY_INFO = new Map(); // raw -> {code, name, raw} — every category site-wide, used so selected tags
+                                // still render even if they don't exist in the currently chosen district
+let DISTRICTS = [];
+let companies = [];       // built fresh per data fetch, grouped for rendering
+let bootstrapped = false;
+
+let state = { district:"ALL", categories:new Set(), sortOn:false, sortDir:"asc",
+  openCompanies:new Set(), openApps:new Set() };
+
+function splitCategory(raw){
+  if(!raw) return {code:"", name:"—"};
+  const m = raw.match(/^([\d.]+)\s*[-–:]?\s*(.*)$/);
+  if(m && m[1]) return {code:m[1], name:m[2] || raw};
+  return {code:"", name:raw};
+}
+
+let refreshCategoryUI = () => {}; // reassigned once setupCombo() runs
+
+// Loads the category pool for the given district ("ALL" = every category site-wide,
+// otherwise only categories that actually occur in that district's rows).
+// "ALL" uses the precomputed category_options table (a full distinct list — pulling
+// this from v_waste_status directly risks missing categories if the table has more
+// rows than our fetch cap). Per-district pulls straight from v_waste_status, since
+// every row there already carries its district and that table is known-good.
+async function loadCategories(district){
+  const { data: catRows, error: catErr } = district === "ALL"
+    ? await sb.from("category_options").select("category")
+    : await sb.from("v_waste_status").select("category").eq("district", district).limit(MAX_ROWS);
+
+  if(catErr){
+    console.error("category load error", catErr);
+    document.getElementById("catInput").placeholder = "Error loading categories — see console";
+    return;
+  }
+
+  CATEGORY_POOL = [...new Set((catRows || []).map(r => r.category))].sort()
+    .map(c => ({ raw: c, ...splitCategory(c) }));
+
+  // Remember every category we've ever seen (site-wide) so a category the user already
+  // selected keeps showing up as a tag even after switching to a district that doesn't
+  // have it — the ledger query below will then correctly come back empty for that
+  // combination instead of silently dropping the filter.
+  CATEGORY_POOL.forEach(c => { if(!CATEGORY_INFO.has(c.raw)) CATEGORY_INFO.set(c.raw, c); });
+
+  document.getElementById("catInput").placeholder = `Search ${CATEGORY_POOL.length} categories…`;
+  refreshCategoryUI();
+}
+
+async function bootstrapApp(){
+  if(bootstrapped) return;
+  bootstrapped = true;
+
+  const { data: distRows, error: distErr } = await sb.from("district_options").select("district");
+  if(distErr) console.error("district load error", distErr);
+  DISTRICTS = [...new Set((distRows || []).map(r => r.district))].sort();
+
+  const districtSelect = document.getElementById("districtSelect");
+  districtSelect.innerHTML = '<option value="ALL">ALL districts</option>' +
+    DISTRICTS.map(d => `<option value="${d}">${d}</option>`).join("");
+  districtSelect.addEventListener("change", async e => {
+    state.district = e.target.value;
+    await loadCategories(state.district);
+    fetchAndRender();
+  });
+
+  setupCombo();
+  setupSortToggle();
+  setupClearFilters();
+
+  await loadCategories("ALL");
+  await fetchAndRender();
+}
+
+/* ---------------- Clear filters ---------------- */
+function setupClearFilters(){
+  const clearBtn = document.getElementById("clearFiltersBtn");
+  const districtSelect = document.getElementById("districtSelect");
+  clearBtn.addEventListener("click", async ()=>{
+    state.district = "ALL";
+    districtSelect.value = "ALL";
+    state.categories.clear();
+    await loadCategories("ALL");
+    fetchAndRender();
+  });
+}
+
+/* ---------------- Searchable multi-select combobox ---------------- */
+function setupCombo(){
+  const combo = document.getElementById("catCombo");
+  const catInput = document.getElementById("catInput");
+  const catInputWrap = document.getElementById("catInputWrap");
+  const catDropdown = document.getElementById("catDropdown");
+  const catOptionsList = document.getElementById("catOptionsList");
+  const catAllRow = document.getElementById("catAllRow");
+
+  function matches(cat, term){
+    if(!term) return true;
+    term = term.toLowerCase();
+    return cat.code.toLowerCase().includes(term) || cat.name.toLowerCase().includes(term);
+  }
+  function currentMatches(){
+    return CATEGORY_POOL.filter(c => matches(c, catInput.value.trim()));
+  }
+  function renderTags(){
+    catInputWrap.querySelectorAll(".combo-tag").forEach(t=>t.remove());
+    [...state.categories].forEach(raw=>{
+      const cat = CATEGORY_INFO.get(raw) || splitCategory(raw) && { raw, ...splitCategory(raw) };
+      if(!cat) return;
+      const inCurrentDistrict = CATEGORY_POOL.some(c=>c.raw===raw);
+      const tag = document.createElement("div");
+      tag.className = "combo-tag" + (inCurrentDistrict ? "" : " combo-tag-unavailable");
+      tag.title = inCurrentDistrict ? "" : "Not present in the selected district";
+      tag.innerHTML = `${cat.code || cat.name.slice(0,12)}<button data-remove="${encodeURIComponent(raw)}">×</button>`;
+      catInputWrap.insertBefore(tag, catInput);
+    });
+    catInputWrap.querySelectorAll("[data-remove]").forEach(btn=>{
+      btn.addEventListener("click", e=>{
+        e.stopPropagation();
+        state.categories.delete(decodeURIComponent(btn.dataset.remove));
+        renderTags(); fetchAndRender();
+      });
+    });
+  }
+  function renderDropdown(){
+    const list = currentMatches();
+    catAllRow.textContent = catInput.value.trim() ? `Select all ${list.length} matches` : "Select all";
+    catOptionsList.innerHTML = list.length ? list.map(c => `
+      <div class="combo-option ${state.categories.has(c.raw)?'selected':''}" data-raw="${encodeURIComponent(c.raw)}">
+        <span>${c.name}</span><span class="code">${c.code}</span>
+      </div>`).join("") : `<div class="combo-empty">No categories match "${catInput.value}".</div>`;
+    catOptionsList.querySelectorAll(".combo-option").forEach(opt=>{
+      opt.addEventListener("click", ()=>{
+        const raw = decodeURIComponent(opt.dataset.raw);
+        if(state.categories.has(raw)) state.categories.delete(raw); else state.categories.add(raw);
+        renderTags(); renderDropdown(); fetchAndRender();
+      });
+    });
+  }
+  catAllRow.addEventListener("click", ()=>{
+    currentMatches().forEach(c=>state.categories.add(c.raw));
+    renderTags(); renderDropdown(); fetchAndRender();
+  });
+  refreshCategoryUI = () => { renderTags(); renderDropdown(); };
+  catInput.addEventListener("input", renderDropdown);
+  catInput.addEventListener("focus", ()=>{ combo.classList.add("open"); renderDropdown(); });
+  document.addEventListener("click", e=>{ if(!combo.contains(e.target)) combo.classList.remove("open"); });
+  renderTags(); renderDropdown();
+}
+
+/* ---------------- Sort toggle ---------------- */
+function setupSortToggle(){
+  const sortSwitch = document.getElementById("sortSwitch");
+  const sortSwitchLabel = document.getElementById("sortSwitchLabel");
+  const dirToggle = document.getElementById("dirToggle");
+  sortSwitch.addEventListener("click", ()=>{
+    state.sortOn = !state.sortOn;
+    sortSwitch.classList.toggle("on", state.sortOn);
+    sortSwitchLabel.textContent = state.sortOn ? "On" : "Off";
+    sortSwitchLabel.classList.toggle("on", state.sortOn);
+    dirToggle.classList.toggle("enabled", state.sortOn);
+    render();
+  });
+  dirToggle.querySelectorAll(".dir-btn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      state.sortDir = btn.dataset.dir;
+      dirToggle.querySelectorAll(".dir-btn").forEach(b=>b.classList.remove("active"));
+      btn.classList.add("active");
+      render();
+    });
+  });
+}
+
+/* ---------------- Fetch + group rows from Supabase ---------------- */
+async function fetchAndRender(){
+  const ledgerBody = document.getElementById("ledgerBody");
+  ledgerBody.innerHTML = `<div class="loading">Loading…</div>`;
+
+  let query = sb.from("v_waste_status").select("*");
+  if(state.district !== "ALL") query = query.eq("district", state.district);
+  if(state.categories.size > 0) query = query.in("category", [...state.categories]);
+
+  const { data: rows, error } = await query.limit(MAX_ROWS);
+  if(error){
+    ledgerBody.innerHTML = `<div class="empty">Error loading data: ${error.message}</div>`;
+    console.error(error);
+    return;
+  }
+
+  companies = groupRows(rows || []);
+  window.__lastRowCount = (rows || []).length;
+  render();
+}
+
+function groupRows(rows){
+  const byCompany = new Map();
+  rows.forEach(r=>{
+    const compKey = r.company_name + "||" + (r.district || "");
+    if(!byCompany.has(compKey)){
+      byCompany.set(compKey, {
+        id: compKey, name: r.company_name, district: r.district || "—",
+        address: r.address || "—", applications: new Map(),
+      });
+    }
+    const comp = byCompany.get(compKey);
+    if(!comp.applications.has(r.application_no)){
+      comp.applications.set(r.application_no, {
+        appNo: r.application_no,
+        granted: r.granted_date || "Not Specified",
+        expiry: r.expiry_date_raw || "Not Specified",
+        status: r.status || "unknown",
+        items: [],
+      });
+    }
+    const cat = splitCategory(r.category);
+    comp.applications.get(r.application_no).items.push({
+      id: r.id,
+      category: cat,
+      quantity: r.quantity,
+      unit: r.unit_raw || "—",
+      group: r.unit_group || "unspecified",
+      normalized: r.quantity_normalized,
+    });
+  });
+  return [...byCompany.values()].map(c => ({...c, applications: [...c.applications.values()]}));
+}
+
+function filteredCompanies(){ return companies; }
+
+/* ---------------- Render ---------------- */
+const ledgerHead = document.getElementById("ledgerHead");
+const ledgerBody = document.getElementById("ledgerBody");
+
+function legendHtml(){
+  return `<span class="unit-legend">
+    <span><span class="dot" style="background:var(--mass)"></span>mass</span>
+    <span><span class="dot" style="background:var(--vol)"></span>volume</span>
+    <span><span class="dot" style="background:var(--onetime)"></span>one-time</span>
+    <span><span class="dot" style="background:var(--unspec)"></span>unspecified</span>
+  </span>`;
+}
+
+function render(){
+  const data = filteredCompanies();
+  const noteBase = document.getElementById("sortNote");
+  const capNote = window.__lastRowCount === MAX_ROWS
+    ? ` <span class="cap-warn">Capped at ${MAX_ROWS} rows — narrow the filters.</span>` : "";
+
+  if(state.sortOn){
+    const rowsFlatCount = data.reduce((s,c)=>s+c.applications.reduce((s2,a)=>s2+a.items.length,0),0);
+    noteBase.innerHTML = `${rowsFlatCount} items, ranked ${state.sortDir==="asc"?"ascending":"descending"} by quantity within unit group.${capNote} ${legendHtml()}`;
+    ledgerHead.innerHTML = `<div class="flat-head">
+      <span>Category</span><span>Company</span><span>Application no.</span><span class="align-r">Quantity</span><span>Unit group</span>
+    </div>`;
+    let rowsFlat = data.flatMap(c => c.applications.flatMap(a => a.items.map(i => ({...i, company:c, app:a}))));
+    rowsFlat.sort((a,b)=>{
+      const av = (a.normalized === null || a.normalized === undefined) ? -Infinity : a.normalized;
+      const bv = (b.normalized === null || b.normalized === undefined) ? -Infinity : b.normalized;
+      return state.sortDir === "asc" ? av - bv : bv - av;
+    });
+    ledgerBody.innerHTML = rowsFlat.length ? rowsFlat.map(r => `
+      <div class="flat-row">
+        <div class="flat-cat">${r.category.code?`<span class="cat-code">${r.category.code}</span>`:""}${r.category.name}</div>
+        <div class="flat-company">${r.company.name} · ${r.company.district}</div>
+        <div class="flat-app">${r.app.appNo}</div>
+        <div class="flat-qty">${r.normalized===null||r.normalized===undefined? "—" : r.normalized}<div class="flat-unit">${r.unit}</div></div>
+        <div><span class="grp-badge grp-${r.group}">${GROUP_LABEL[r.group] || r.group}</span></div>
+      </div>
+    `).join("") : `<div class="empty">No items match the current filters.</div>`;
+    return;
+  }
+
+  const companyCount = data.length;
+  const appCount = data.reduce((s,c)=>s+c.applications.length,0);
+  noteBase.innerHTML = `${companyCount} companies · ${appCount} applications.${capNote} ${legendHtml()}`;
+  ledgerHead.innerHTML = `<div class="ledger-head">
+    <span>Company</span><span>District</span><span>Applications</span><span class="align-r">Items</span><span></span>
+  </div>`;
+
+  if(!data.length){ ledgerBody.innerHTML = `<div class="empty">No companies match the current filters.</div>`; return; }
+  ledgerBody.innerHTML = data.map(renderCompany).join("");
+  attachHandlers();
+}
+
+function renderCompany(c){
+  const open = state.openCompanies.has(c.id);
+  const itemCount = c.applications.reduce((s,a)=>s+a.items.length,0);
+  return `
+  <div class="company ${open?'open':''}" data-company="${c.id}">
+    <div class="company-row" data-toggle-company="${c.id}">
+      <div><div class="company-name">${c.name}</div><div class="company-address">${c.address}</div></div>
+      <div class="district-tag">${c.district}</div>
+      <div class="app-count">${c.applications.length}</div>
+      <div class="qty-total">${itemCount} items</div>
+      <div class="caret">▸</div>
+    </div>
+    <div class="apps-wrap">${c.applications.map(a => renderApp(c.id, a)).join("")}</div>
+  </div>`;
+}
+function renderApp(companyId, app){
+  const key = companyId+"-"+app.appNo;
+  const open = state.openApps.has(key);
+  return `
+  <div class="app ${open?'open':''}" data-app="${key}">
+    <div class="app-row" data-toggle-app="${key}">
+      <div class="app-no"><span class="lbl">App</span>${app.appNo}</div>
+      <div class="date-field"><span class="lbl">Granted</span><span class="date-val">${app.granted}</span></div>
+      <div class="date-field"><span class="lbl">Expiry</span><span class="date-val">${app.expiry}</span></div>
+      <div><span class="stamp ${app.status}">${app.status}</span></div>
+      <div class="app-caret">▸</div>
+    </div>
+    <div class="items-wrap">
+      <table class="items-table">
+        <thead><tr><th>Category</th><th class="align-r">Quantity</th><th>Unit</th></tr></thead>
+        <tbody>
+          ${app.items.map(i => `
+            <tr>
+              <td>${i.category.code?`<span class="cat-code">${i.category.code}</span>`:""}${i.category.name}<span class="grp-badge grp-${i.group}">${GROUP_LABEL[i.group] || i.group}</span></td>
+              <td class="align-r">${i.quantity===null||i.quantity===undefined?"—":i.quantity}</td>
+              <td>${i.unit}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+function attachHandlers(){
+  ledgerBody.querySelectorAll("[data-toggle-company]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const id = el.dataset.toggleCompany;
+      if(state.openCompanies.has(id)) state.openCompanies.delete(id); else state.openCompanies.add(id);
+      render();
+    });
+  });
+  ledgerBody.querySelectorAll("[data-toggle-app]").forEach(el=>{
+    el.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const key = el.dataset.toggleApp;
+      if(state.openApps.has(key)) state.openApps.delete(key); else state.openApps.add(key);
+      render();
+    });
+  });
+}
+</script>
+</body>
+</html>
