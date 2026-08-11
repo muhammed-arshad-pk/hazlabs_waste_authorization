@@ -72,6 +72,10 @@
 
   .sortbar{display:flex;align-items:center;gap:14px;margin-left:auto;}
   #clearFiltersBtn{margin-top:22px;}
+  .btn-search{margin-top:22px;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;font-weight:600;padding:9px 16px;
+    background:var(--accent);color:#04211A;border:none;border-radius:var(--radius);cursor:pointer;transition:background .12s;}
+  .btn-search:hover{background:#6BEFC7;}
+  .btn-search:disabled{background:var(--hairline-strong);color:var(--ink-soft);cursor:not-allowed;}
 
   /* ---------- Pagination ---------- */
   .pagination-bar{display:flex;align-items:center;justify-content:center;gap:16px;margin:18px 0 4px;}
@@ -124,6 +128,15 @@
   .unit-legend span{display:inline-flex;align-items:center;gap:4px;font-size:11px;}
   .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
   .cap-warn{color:var(--hazard);font-weight:600;}
+
+  /* ---------- Company name search ---------- */
+  .company-search-wrap{margin:0 0 14px;}
+  .company-search-wrap input{width:100%;max-width:420px;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;
+    padding:9px 12px;border:1px solid var(--hairline-strong);border-radius:var(--radius);background:var(--paper);color:var(--ink);}
+  .company-search-wrap input:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .company-search-wrap input::placeholder{color:var(--ink-soft);}
+  .company-search-wrap input:disabled{opacity:0.45;cursor:not-allowed;}
+  .company-search-note{font-size:11px;color:var(--ink-soft);margin-top:5px;}
 
   /* ---------- Ledger (hierarchical view) ---------- */
   .ledger-head{display:grid;grid-template-columns:2.4fr 1.1fr 0.9fr 1fr 28px;padding:0 14px 8px;gap:10px;
@@ -262,14 +275,20 @@
             </div>
           </div>
         </div>
+        <button class="btn-search" id="searchBtn" type="button">Search</button>
         <button class="btn-ghost" id="clearFiltersBtn" type="button">Clear filters</button>
       </div>
     </div>
 
     <div class="sort-note" id="sortNote"></div>
 
+    <div class="company-search-wrap">
+      <input type="text" id="companySearchInput" placeholder="Search company name…" disabled autocomplete="off">
+      <div class="company-search-note" id="companySearchNote">Run a search above to enable this.</div>
+    </div>
+
     <div id="ledgerHead"></div>
-    <div id="ledgerBody"><div class="loading">Loading…</div></div>
+    <div id="ledgerBody"><div class="loading">Fill in filters and click Search…</div></div>
 
     <div class="pagination-bar" id="paginationBar">
       <button class="page-btn" id="prevPageBtn" type="button">‹ Previous</button>
@@ -375,9 +394,10 @@ let CATEGORY_INFO = new Map(); // raw -> {code, name, raw} — every category si
 let DISTRICTS = [];
 let companies = [];       // built fresh per data fetch, grouped for rendering
 let bootstrapped = false;
+let hasSearched = false;  // becomes true once the user clicks Search at least once
 
 let state = { district:"ALL", categories:new Set(), sortDir:"desc", page:0, hasNextPage:false,
-  openCompanies:new Set(), openApps:new Set() };
+  openCompanies:new Set(), openApps:new Set(), companyQuery:"" };
 
 function splitCategory(raw){
   if(!raw) return {code:"", name:"—"};
@@ -441,20 +461,21 @@ async function bootstrapApp(){
   const districtSelect = document.getElementById("districtSelect");
   districtSelect.innerHTML = '<option value="ALL">ALL districts</option>' +
     DISTRICTS.map(d => `<option value="${d}">${d}</option>`).join("");
+  // Changing filters no longer auto-fetches — it just updates state and re-loads the
+  // category pool for the new district. The user clicks Search to actually run the query.
   districtSelect.addEventListener("change", async e => {
     state.district = e.target.value;
-    state.page = 0;
     await loadCategories(state.district);
-    fetchAndRender();
   });
 
   setupCombo();
   setupSortToggle();
   setupClearFilters();
   setupPagination();
+  setupSearchButton();
+  setupCompanySearch();
 
   await loadCategories("ALL");
-  await fetchAndRender();
 }
 
 /* ---------------- Searchable multi-select combobox ---------------- */
@@ -490,8 +511,7 @@ function setupCombo(){
       btn.addEventListener("click", e=>{
         e.stopPropagation();
         state.categories.delete(decodeURIComponent(btn.dataset.remove));
-        state.page = 0;
-        renderTags(); fetchAndRender();
+        renderTags();
       });
     });
   }
@@ -506,15 +526,13 @@ function setupCombo(){
       opt.addEventListener("click", ()=>{
         const raw = decodeURIComponent(opt.dataset.raw);
         if(state.categories.has(raw)) state.categories.delete(raw); else state.categories.add(raw);
-        state.page = 0;
-        renderTags(); renderDropdown(); fetchAndRender();
+        renderTags(); renderDropdown();
       });
     });
   }
   catAllRow.addEventListener("click", ()=>{
     currentMatches().forEach(c=>state.categories.add(c.raw));
-    state.page = 0;
-    renderTags(); renderDropdown(); fetchAndRender();
+    renderTags(); renderDropdown();
   });
   refreshCategoryUI = () => { renderTags(); renderDropdown(); };
   catInput.addEventListener("input", renderDropdown);
@@ -531,8 +549,18 @@ function setupSortToggle(){
       state.sortDir = btn.dataset.dir;
       dirToggle.querySelectorAll(".dir-btn").forEach(b=>b.classList.remove("active"));
       btn.classList.add("active");
-      render();
+      if(hasSearched) render();
     });
+  });
+}
+
+/* ---------------- Search button ---------------- */
+function setupSearchButton(){
+  document.getElementById("searchBtn").addEventListener("click", ()=>{
+    state.page = 0;
+    state.openCompanies.clear();
+    state.openApps.clear();
+    fetchAndRender();
   });
 }
 
@@ -552,6 +580,23 @@ function setupPagination(){
   });
 }
 
+/* ---------------- Company name search (client-side, post-fetch) ---------------- */
+function setupCompanySearch(){
+  const input = document.getElementById("companySearchInput");
+  input.addEventListener("input", ()=>{
+    state.companyQuery = input.value.trim().toLowerCase();
+    render();
+  });
+}
+function enableCompanySearch(enable){
+  const input = document.getElementById("companySearchInput");
+  const note = document.getElementById("companySearchNote");
+  input.disabled = !enable;
+  note.textContent = enable
+    ? "Filters within the companies currently loaded on this page."
+    : "Run a search above to enable this.";
+}
+
 /* ---------------- Clear filters ---------------- */
 function setupClearFilters(){
   const btn = document.getElementById("clearFiltersBtn");
@@ -562,8 +607,10 @@ function setupClearFilters(){
     state.page = 0;
     state.openCompanies.clear();
     state.openApps.clear();
+    state.companyQuery = "";
 
     document.getElementById("districtSelect").value = "ALL";
+    document.getElementById("companySearchInput").value = "";
 
     const dirToggle = document.getElementById("dirToggle");
     dirToggle.querySelectorAll(".dir-btn").forEach(b=>{
@@ -571,12 +618,27 @@ function setupClearFilters(){
     });
 
     await loadCategories("ALL");   // also calls refreshCategoryUI() to clear tags
-    await fetchAndRender();
+
+    // Clearing resets filters but doesn't re-run the query on its own — same "click
+    // Search to load" rule applies. If a search had already run, re-run it with the
+    // now-cleared filters so the view doesn't show stale filtered results; otherwise
+    // just leave the ledger in its pre-search state.
+    if(hasSearched){
+      fetchAndRender();
+    } else {
+      companies = [];
+      enableCompanySearch(false);
+      document.getElementById("ledgerBody").innerHTML = `<div class="loading">Fill in filters and click Search…</div>`;
+      document.getElementById("ledgerHead").innerHTML = "";
+      document.getElementById("sortNote").innerHTML = "";
+      renderPagination();
+    }
   });
 }
 
 /* ---------------- Fetch + group rows from Supabase ---------------- */
 async function fetchAndRender(){
+  hasSearched = true;
   const ledgerBody = document.getElementById("ledgerBody");
   ledgerBody.innerHTML = `<div class="loading">Loading…</div>`;
 
@@ -627,6 +689,12 @@ async function fetchAndRender(){
 
   companies = groupRows(pageRows);
   window.__lastRowCount = pageRows.length;
+  // Company-name search only makes sense once there's data on screen to filter — reset
+  // it on every new search so a leftover query from a previous result set doesn't hide
+  // rows the user doesn't expect.
+  state.companyQuery = "";
+  document.getElementById("companySearchInput").value = "";
+  enableCompanySearch(companies.length > 0);
   render();
 }
 
@@ -671,7 +739,11 @@ function companyQtyTotal(c){
 }
 
 function filteredCompanies(){
-  const sorted = [...companies];
+  let list = companies;
+  if(state.companyQuery){
+    list = list.filter(c => c.name.toLowerCase().includes(state.companyQuery));
+  }
+  const sorted = [...list];
   sorted.sort((a,b)=>{
     const av = companyQtyTotal(a);
     const bv = companyQtyTotal(b);
@@ -702,15 +774,23 @@ function render(){
   const rangeNote = window.__lastRowCount > 0
     ? `<span class="cap-warn">Showing rows ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()}${state.hasNextPage ? " (more available — use Next)" : ""}.</span> `
     : "";
+  const filterNote = state.companyQuery
+    ? `<span class="cap-warn">${data.length} of ${companies.length} companies match "${state.companyQuery}" on this page.</span> `
+    : "";
 
-  noteBase.innerHTML = `${rangeNote}${legendHtml()}`;
+  noteBase.innerHTML = `${rangeNote}${filterNote}${legendHtml()}`;
   ledgerHead.innerHTML = `<div class="ledger-head">
     <span>Company</span><span>District</span><span>Applications</span><span class="align-r">Items</span><span></span>
   </div>`;
 
   renderPagination();
 
-  if(!data.length){ ledgerBody.innerHTML = `<div class="empty">No companies match the current filters.</div>`; return; }
+  if(!data.length){
+    ledgerBody.innerHTML = state.companyQuery
+      ? `<div class="empty">No companies on this page match "${state.companyQuery}".</div>`
+      : `<div class="empty">No companies match the current filters.</div>`;
+    return;
+  }
   ledgerBody.innerHTML = data.map(renderCompany).join("");
   attachHandlers();
 }
