@@ -157,7 +157,7 @@
   .apps-wrap{display:none;background:var(--bg);}
   .company.open .apps-wrap{display:block;}
   .app{border-top:1px solid var(--hairline);margin-left:28px;}
-  .app-row{display:grid;grid-template-columns:1.1fr 1fr 1fr 0.9fr 22px;align-items:center;gap:10px;padding:11px 14px 11px 10px;cursor:pointer;}
+  .app-row{display:grid;grid-template-columns:1.1fr 1fr 1fr 0.9fr auto 22px;align-items:center;gap:10px;padding:11px 14px 11px 10px;cursor:pointer;}
   .app-row:hover{background:var(--paper-2);}
   .app-no{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--accent);}
   .app-no .lbl{color:var(--ink-soft);margin-right:5px;font-family:'IBM Plex Sans',sans-serif;}
@@ -169,6 +169,10 @@
   .stamp.active{color:var(--green-ink);border-color:var(--green-ink);background:var(--green-soft);}
   .stamp.expired{color:var(--rust);border-color:var(--rust);background:var(--rust-soft);}
   .stamp.unknown{color:var(--grey-ink);border-color:var(--grey-ink);background:var(--grey-soft);}
+  .doc-link{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.05em;color:var(--accent);
+    border:1px solid var(--hairline-strong);border-radius:var(--radius);padding:4px 8px;white-space:nowrap;
+    text-decoration:none;transition:border-color .12s,background .12s;}
+  .doc-link:hover{border-color:var(--accent);background:var(--accent-soft);}
   .app-caret{text-align:right;color:var(--ink-soft);font-size:11px;transition:transform 0.15s;}
   .app.open .app-caret{transform:rotate(90deg);color:var(--accent);}
   .items-wrap{display:none;background:var(--paper);margin-left:20px;border-left:2px solid var(--hairline-strong);}
@@ -976,6 +980,9 @@ function renderCompany(c){
     <div class="apps-wrap">${sortedApps.map(a => renderApp(c.id, a)).join("")}</div>
   </div>`;
 }
+function authOrderUrl(appNo){
+  return `https://ocmms.tn.gov.in/OCMMS_REPORT/userMaster/downloadHWAAuthorisationOrder1/${encodeURIComponent(appNo)}`;
+}
 function renderApp(companyId, app){
   const key = companyId+"-"+app.appNo;
   const open = state.openApps.has(key);
@@ -987,6 +994,7 @@ function renderApp(companyId, app){
       <div class="date-field"><span class="lbl">Granted</span><span class="date-val">${app.granted}</span></div>
       <div class="date-field"><span class="lbl">Expiry</span><span class="date-val">${app.expiry}</span></div>
       <div><span class="stamp ${app.status}">${app.status}</span></div>
+      <a class="doc-link" href="${authOrderUrl(app.appNo)}" target="_blank" rel="noopener noreferrer" data-stop-toggle>View Document</a>
       <div class="app-caret">▸</div>
     </div>
     <div class="items-wrap">
@@ -1015,6 +1023,7 @@ function attachHandlers(){
   ledgerBody.querySelectorAll("[data-toggle-app]").forEach(el=>{
     el.addEventListener("click", (e)=>{
       e.stopPropagation();
+      if(e.target.closest("[data-stop-toggle]")) return;
       const key = el.dataset.toggleApp;
       if(state.openApps.has(key)) state.openApps.delete(key); else state.openApps.add(key);
       render();
