@@ -283,8 +283,8 @@
     <div class="sort-note" id="sortNote"></div>
 
     <div class="company-search-wrap">
-      <input type="text" id="companySearchInput" placeholder="Search company name…" disabled autocomplete="off">
-      <div class="company-search-note" id="companySearchNote">Run a search above to enable this.</div>
+      <input type="text" id="companySearchInput" placeholder="Search company name (searches the whole database)…" autocomplete="off">
+      <div class="company-search-note" id="companySearchNote">Searches every matching company in the database — not just what's loaded on this page.</div>
     </div>
 
     <div id="ledgerHead"></div>
@@ -397,7 +397,7 @@ let bootstrapped = false;
 let hasSearched = false;  // becomes true once the user clicks Search at least once
 
 let state = { district:"ALL", categories:new Set(), sortDir:"desc", page:0, hasNextPage:false,
-  openCompanies:new Set(), openApps:new Set(), companyQuery:"" };
+  openCompanies:new Set(), openApps:new Set(), companyQuery:"", companySearchMode:false };
 
 function splitCategory(raw){
   if(!raw) return {code:"", name:"—"};
@@ -580,21 +580,90 @@ function setupPagination(){
   });
 }
 
-/* ---------------- Company name search (client-side, post-fetch) ---------------- */
+/* ---------------- Company name search (server-side, whole table) ----------------
+   The old version only filtered `companies`, i.e. whatever page of rows happened to
+   already be fetched — a company sitting on page 4 was invisible while page 1 was on
+   screen. This instead queries v_waste_status directly by company_name so it finds a
+   match anywhere in the table, not just what's currently loaded. */
+const DEFAULT_COMPANY_SEARCH_NOTE = "Searches every matching company in the database — not just what's loaded on this page.";
+function debounce(fn, ms){
+  let t;
+  return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn(...args), ms); };
+}
 function setupCompanySearch(){
   const input = document.getElementById("companySearchInput");
-  input.addEventListener("input", ()=>{
-    state.companyQuery = input.value.trim().toLowerCase();
-    render();
-  });
-}
-function enableCompanySearch(enable){
-  const input = document.getElementById("companySearchInput");
   const note = document.getElementById("companySearchNote");
-  input.disabled = !enable;
-  note.textContent = enable
-    ? "Filters within the companies currently loaded on this page."
-    : "Run a search above to enable this.";
+  const runSearch = debounce(()=>{
+    const q = input.value.trim();
+    state.companyQuery = q.toLowerCase();
+    if(q.length === 0){
+      state.companySearchMode = false;
+      if(hasSearched){
+        fetchAndRender();
+      } else {
+        companies = [];
+        document.getElementById("ledgerBody").innerHTML = `<div class="loading">Fill in filters and click Search…</div>`;
+        document.getElementById("ledgerHead").innerHTML = "";
+        document.getElementById("sortNote").innerHTML = "";
+        renderPagination();
+      }
+      note.textContent = DEFAULT_COMPANY_SEARCH_NOTE;
+      return;
+    }
+    if(q.length < 2) return; // wait for at least 2 characters before hitting the DB
+    searchCompaniesAcrossDB(q);
+  }, 350);
+  input.addEventListener("input", runSearch);
+}
+
+async function searchCompaniesAcrossDB(query){
+  state.companySearchMode = true;
+  const note = document.getElementById("companySearchNote");
+  note.textContent = "Searching…";
+  document.getElementById("ledgerBody").innerHTML = `<div class="loading">Searching…</div>`;
+
+  const allCategoriesSelected = CATEGORY_POOL.length > 0 &&
+    CATEGORY_POOL.every(c => state.categories.has(c.raw));
+  // Escape LIKE wildcards in the user's text so a literal "%" or "_" in a company name
+  // search doesn't get interpreted as a pattern by Postgres.
+  const escaped = query.replace(/[%_]/g, m => "\\" + m);
+
+  const PAGE_SIZE = 1000;
+  const MAX_PAGES = 5; // safety cap — 5,000 matching rows is far more than a name search needs
+  let allRows = [];
+  let offset = 0;
+  let truncated = false;
+
+  for(let page = 0; page < MAX_PAGES; page++){
+    let q = sb.from("v_waste_status").select("*").ilike("company_name", `%${escaped}%`);
+    if(state.district !== "ALL") q = q.eq("district", state.district);
+    if(state.categories.size > 0 && !allCategoriesSelected) q = q.in("category", [...state.categories]);
+    const { data, error } = await q.range(offset, offset + PAGE_SIZE - 1);
+
+    if(error){
+      document.getElementById("ledgerBody").innerHTML = `<div class="empty">Error searching: ${error.message}</div>`;
+      note.textContent = DEFAULT_COMPANY_SEARCH_NOTE;
+      console.error(error);
+      return;
+    }
+
+    allRows = allRows.concat(data || []);
+    if(!data || data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+    if(page === MAX_PAGES - 1) truncated = true;
+  }
+
+  // The input may have changed again while this request was in flight (debounce still
+  // lets an older, slower request finish after a newer one starts) — bail if stale.
+  if(document.getElementById("companySearchInput").value.trim().toLowerCase() !== query.toLowerCase()) return;
+
+  companies = groupRows(allRows);
+  window.__lastRowCount = allRows.length;
+  state.hasNextPage = false;
+  note.textContent = truncated
+    ? `Showing first ${allRows.length.toLocaleString()} matching rows — refine your search for more precise results.`
+    : `${companies.length} compan${companies.length === 1 ? "y" : "ies"} found across the database.`;
+  render();
 }
 
 /* ---------------- Clear filters ---------------- */
@@ -608,9 +677,11 @@ function setupClearFilters(){
     state.openCompanies.clear();
     state.openApps.clear();
     state.companyQuery = "";
+    state.companySearchMode = false;
 
     document.getElementById("districtSelect").value = "ALL";
     document.getElementById("companySearchInput").value = "";
+    document.getElementById("companySearchNote").textContent = DEFAULT_COMPANY_SEARCH_NOTE;
 
     const dirToggle = document.getElementById("dirToggle");
     dirToggle.querySelectorAll(".dir-btn").forEach(b=>{
@@ -627,7 +698,6 @@ function setupClearFilters(){
       fetchAndRender();
     } else {
       companies = [];
-      enableCompanySearch(false);
       document.getElementById("ledgerBody").innerHTML = `<div class="loading">Fill in filters and click Search…</div>`;
       document.getElementById("ledgerHead").innerHTML = "";
       document.getElementById("sortNote").innerHTML = "";
@@ -689,12 +759,12 @@ async function fetchAndRender(){
 
   companies = groupRows(pageRows);
   window.__lastRowCount = pageRows.length;
-  // Company-name search only makes sense once there's data on screen to filter — reset
-  // it on every new search so a leftover query from a previous result set doesn't hide
-  // rows the user doesn't expect.
+  // A fresh main search replaces the page-based result set, so drop any leftover
+  // company search (it queried the whole table independently of this page/filter run).
   state.companyQuery = "";
+  state.companySearchMode = false;
   document.getElementById("companySearchInput").value = "";
-  enableCompanySearch(companies.length > 0);
+  document.getElementById("companySearchNote").textContent = DEFAULT_COMPANY_SEARCH_NOTE;
   render();
 }
 
@@ -769,16 +839,18 @@ function render(){
   const data = filteredCompanies();
   const noteBase = document.getElementById("sortNote");
 
-  const rangeStart = state.page * MAX_ROWS + 1;
-  const rangeEnd = state.page * MAX_ROWS + window.__lastRowCount;
-  const rangeNote = window.__lastRowCount > 0
-    ? `<span class="cap-warn">Showing rows ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()}${state.hasNextPage ? " (more available — use Next)" : ""}.</span> `
-    : "";
-  const filterNote = state.companyQuery
-    ? `<span class="cap-warn">${data.length} of ${companies.length} companies match "${state.companyQuery}" on this page.</span> `
-    : "";
+  let rangeNote;
+  if(state.companySearchMode){
+    rangeNote = `<span class="cap-warn">Company search — ${data.length} compan${data.length===1?'y':'ies'} matched across the whole database (not just this page).</span> `;
+  } else {
+    const rangeStart = state.page * MAX_ROWS + 1;
+    const rangeEnd = state.page * MAX_ROWS + window.__lastRowCount;
+    rangeNote = window.__lastRowCount > 0
+      ? `<span class="cap-warn">Showing rows ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()}${state.hasNextPage ? " (more available — use Next)" : ""}.</span> `
+      : "";
+  }
 
-  noteBase.innerHTML = `${rangeNote}${filterNote}${legendHtml()}`;
+  noteBase.innerHTML = `${rangeNote}${legendHtml()}`;
   ledgerHead.innerHTML = `<div class="ledger-head">
     <span>Company</span><span>District</span><span>Applications</span><span class="align-r">Items</span><span></span>
   </div>`;
@@ -786,8 +858,8 @@ function render(){
   renderPagination();
 
   if(!data.length){
-    ledgerBody.innerHTML = state.companyQuery
-      ? `<div class="empty">No companies on this page match "${state.companyQuery}".</div>`
+    ledgerBody.innerHTML = state.companySearchMode
+      ? `<div class="empty">No companies match "${state.companyQuery}".</div>`
       : `<div class="empty">No companies match the current filters.</div>`;
     return;
   }
@@ -800,6 +872,13 @@ function renderPagination(){
   const prevBtn = document.getElementById("prevPageBtn");
   const nextBtn = document.getElementById("nextPageBtn");
   const label = document.getElementById("pageLabel");
+  // Company search fetches every matching row up front rather than one page at a time,
+  // so Prev/Next (which page through v_waste_status) don't apply while it's active.
+  if(state.companySearchMode){
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "";
   prevBtn.disabled = state.page === 0;
   nextBtn.disabled = !state.hasNextPage;
   label.textContent = `Page ${state.page + 1}`;
