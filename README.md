@@ -103,32 +103,42 @@ is skipped. This isn't just an optimization: sending ~300+ category strings as
 URL query params, especially combined with "ALL districts", can build a request
 URL long enough for PostgREST to reject outright.
 
-## Company name search — searches the whole table, not just the loaded page
+## Company name search — searches every page of the *filtered* results, not just the loaded page
 
 This is the feature most likely to be revisited, so the concept is worth being
 explicit about: **it is a separate, direct Supabase query**, independent of the
-paginated main ledger query.
+paginated main ledger query — but it is intentionally scoped to run *on top of*
+an already-run district/category search, not as an alternative to one.
 
-- Input is debounced (350 ms, `debounce()` helper) and requires ≥2 characters
-  before it fires, to avoid hammering the DB on every keystroke.
+- The input starts `disabled` and stays that way until a main **Search** has
+  run at least once (`hasSearched`, toggled via `enableCompanySearch()`) — the
+  workflow is: pick district/category → click Search → *then* company search
+  becomes usable. It re-disables if the user clears filters back to the
+  pre-search state.
+- Debounced (350 ms, `debounce()` helper), requires ≥2 characters before it
+  fires, to avoid hammering the DB on every keystroke.
 - `searchCompaniesAcrossDB(query)` runs `ilike company_name ilike '%query%'`
   (with `%`/`_` escaped so literal wildcards in a company name don't act as
-  patterns) against `v_waste_status`, **respecting the currently staged
-  district/category filters** but ignoring pagination — it loops in
-  `PAGE_SIZE` (1000) chunks up to `MAX_PAGES` (5, i.e. 5000 rows) and unions
-  the results.
+  patterns) against `v_waste_status`, **re-applying whatever district/category
+  filters the last main Search used** (`state.district`, `state.categories`) —
+  it does not search outside those filters. It ignores pagination, though:
+  it loops in `PAGE_SIZE` (1000) chunks up to `MAX_PAGES` (5, i.e. 5000 rows)
+  and unions the results, so it finds a match on page 4 of the filtered set
+  even while page 1 is what's on screen.
 - A stale-response guard checks the input box's current value still matches
   the query that was in flight before applying results (a slower older
   request finishing after a newer one shouldn't clobber it).
 - While active, `state.companySearchMode = true`: the pagination bar is hidden
-  (results aren't paged — they're the full match set already), and the
-  `#sortNote` / `#companySearchNote` text switches to search-specific wording.
+  (results aren't paged — they're the full filtered match set already), and
+  the `#sortNote` / `#companySearchNote` text switches to search-specific
+  wording.
 - Clearing the box reverts to whatever the main paginated search last showed
-  (`fetchAndRender()` if a main search had run, otherwise the initial
-  "Fill in filters and click Search…" placeholder).
+  (`fetchAndRender()`, since company search can only be active when
+  `hasSearched` is already true).
 - A brand-new main **Search** click always drops any active company search
-  (`state.companySearchMode = false`, input cleared) since it replaces the
-  underlying result set.
+  (`state.companySearchMode = false`, input cleared, then re-enabled once the
+  new search's results are in) since it replaces the underlying filtered set
+  the company search was scoped to.
 
 ## Sorting
 

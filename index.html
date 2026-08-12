@@ -283,8 +283,8 @@
     <div class="sort-note" id="sortNote"></div>
 
     <div class="company-search-wrap">
-      <input type="text" id="companySearchInput" placeholder="Search company name (searches the whole database)…" autocomplete="off">
-      <div class="company-search-note" id="companySearchNote">Searches every matching company in the database — not just what's loaded on this page.</div>
+      <input type="text" id="companySearchInput" placeholder="Search company name…" disabled autocomplete="off">
+      <div class="company-search-note" id="companySearchNote">Run a search above to enable this.</div>
     </div>
 
     <div id="ledgerHead"></div>
@@ -580,33 +580,37 @@ function setupPagination(){
   });
 }
 
-/* ---------------- Company name search (server-side, whole table) ----------------
-   The old version only filtered `companies`, i.e. whatever page of rows happened to
-   already be fetched — a company sitting on page 4 was invisible while page 1 was on
-   screen. This instead queries v_waste_status directly by company_name so it finds a
-   match anywhere in the table, not just what's currently loaded. */
-const DEFAULT_COMPANY_SEARCH_NOTE = "Searches every matching company in the database — not just what's loaded on this page.";
+/* ---------------- Company name search (server-side, scoped to the current filters) ----------------
+   The old version only filtered `companies`, i.e. whatever single page of rows happened to
+   already be fetched — a company sitting on page 4 of the filtered results was invisible
+   while page 1 was on screen. This instead queries v_waste_status directly by company_name,
+   re-applying whatever district/category filters the last Search used, and looping through
+   every page of THAT filtered result set — so it finds a match anywhere in the filtered
+   results, not just the one page currently loaded. It intentionally does NOT search outside
+   the current district/category filters — only within "the results that came after the
+   district and category filtration" (i.e. it requires a Search to have been run first). */
+const DEFAULT_COMPANY_SEARCH_NOTE = "Searches every company matching your current district/category filters — across all pages, not just the one shown.";
+const DISABLED_COMPANY_SEARCH_NOTE = "Run a search above to enable this.";
 function debounce(fn, ms){
   let t;
   return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn(...args), ms); };
+}
+function enableCompanySearch(enable){
+  const input = document.getElementById("companySearchInput");
+  const note = document.getElementById("companySearchNote");
+  input.disabled = !enable;
+  note.textContent = enable ? DEFAULT_COMPANY_SEARCH_NOTE : DISABLED_COMPANY_SEARCH_NOTE;
 }
 function setupCompanySearch(){
   const input = document.getElementById("companySearchInput");
   const note = document.getElementById("companySearchNote");
   const runSearch = debounce(()=>{
+    if(!hasSearched) return; // company search only makes sense on top of an already-run district/category search
     const q = input.value.trim();
     state.companyQuery = q.toLowerCase();
     if(q.length === 0){
       state.companySearchMode = false;
-      if(hasSearched){
-        fetchAndRender();
-      } else {
-        companies = [];
-        document.getElementById("ledgerBody").innerHTML = `<div class="loading">Fill in filters and click Search…</div>`;
-        document.getElementById("ledgerHead").innerHTML = "";
-        document.getElementById("sortNote").innerHTML = "";
-        renderPagination();
-      }
+      fetchAndRender();
       note.textContent = DEFAULT_COMPANY_SEARCH_NOTE;
       return;
     }
@@ -662,7 +666,7 @@ async function searchCompaniesAcrossDB(query){
   state.hasNextPage = false;
   note.textContent = truncated
     ? `Showing first ${allRows.length.toLocaleString()} matching rows — refine your search for more precise results.`
-    : `${companies.length} compan${companies.length === 1 ? "y" : "ies"} found across the database.`;
+    : `${companies.length} compan${companies.length === 1 ? "y" : "ies"} found within the current filters.`;
   render();
 }
 
@@ -681,7 +685,6 @@ function setupClearFilters(){
 
     document.getElementById("districtSelect").value = "ALL";
     document.getElementById("companySearchInput").value = "";
-    document.getElementById("companySearchNote").textContent = DEFAULT_COMPANY_SEARCH_NOTE;
 
     const dirToggle = document.getElementById("dirToggle");
     dirToggle.querySelectorAll(".dir-btn").forEach(b=>{
@@ -698,6 +701,7 @@ function setupClearFilters(){
       fetchAndRender();
     } else {
       companies = [];
+      enableCompanySearch(false);
       document.getElementById("ledgerBody").innerHTML = `<div class="loading">Fill in filters and click Search…</div>`;
       document.getElementById("ledgerHead").innerHTML = "";
       document.getElementById("sortNote").innerHTML = "";
@@ -760,11 +764,13 @@ async function fetchAndRender(){
   companies = groupRows(pageRows);
   window.__lastRowCount = pageRows.length;
   // A fresh main search replaces the page-based result set, so drop any leftover
-  // company search (it queried the whole table independently of this page/filter run).
+  // company search (it re-queries against whatever district/category filters this
+  // search just ran with, so a stale query from a previous filter combination
+  // shouldn't carry over).
   state.companyQuery = "";
   state.companySearchMode = false;
   document.getElementById("companySearchInput").value = "";
-  document.getElementById("companySearchNote").textContent = DEFAULT_COMPANY_SEARCH_NOTE;
+  enableCompanySearch(companies.length > 0);
   render();
 }
 
@@ -841,7 +847,7 @@ function render(){
 
   let rangeNote;
   if(state.companySearchMode){
-    rangeNote = `<span class="cap-warn">Company search — ${data.length} compan${data.length===1?'y':'ies'} matched across the whole database (not just this page).</span> `;
+    rangeNote = `<span class="cap-warn">Company search — ${data.length} compan${data.length===1?'y':'ies'} matched within your current filters (across all pages, not just this one).</span> `;
   } else {
     const rangeStart = state.page * MAX_ROWS + 1;
     const rangeEnd = state.page * MAX_ROWS + window.__lastRowCount;
