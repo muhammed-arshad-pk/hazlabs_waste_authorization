@@ -103,6 +103,23 @@ is skipped. This isn't just an optimization: sending ~300+ category strings as
 URL query params, especially combined with "ALL districts", can build a request
 URL long enough for PostgREST to reject outright.
 
+### Default categories only (`state.defaultOnly`)
+
+A switch (`setupDefaultOnlyToggle`) next to the category combo. `v_waste_status`
+carries an `is_default` boolean per row/category; when the switch is on:
+
+- `loadCategories()` adds `.eq("is_default", true)`, so `CATEGORY_POOL` (and
+  therefore the dropdown) only ever offers default categories.
+- `fetchAndRender()` and `searchCompaniesAcrossDB()` **also** add
+  `.eq("is_default", true)` directly, independent of `state.categories` — this
+  matters when no specific category is selected (the "all categories" case),
+  since otherwise that would silently mean "all categories" rather than "all
+  *default* categories".
+
+Toggling it re-loads the category pool (same as changing district) but doesn't
+re-run an already-displayed search on its own — same "click Search to apply"
+convention as every other filter here. `setupClearFilters()` resets it to off.
+
 ## Company name search — searches every page of the *filtered* results, not just the loaded page
 
 This is the feature most likely to be revisited, so the concept is worth being

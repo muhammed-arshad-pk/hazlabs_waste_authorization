@@ -265,6 +265,14 @@
         </div>
       </div>
 
+      <div class="filter-group">
+        <div class="filter-label">Default categories</div>
+        <div class="switch-row">
+          <div class="switch" id="defaultOnlySwitch"><div class="knob"></div></div>
+          <span class="switch-label" id="defaultOnlyLabel">Off</span>
+        </div>
+      </div>
+
       <div class="sortbar">
         <div class="filter-group">
           <div class="filter-label">Sort by quantity</div>
@@ -397,7 +405,8 @@ let bootstrapped = false;
 let hasSearched = false;  // becomes true once the user clicks Search at least once
 
 let state = { district:"ALL", categories:new Set(), sortDir:"desc", page:0, hasNextPage:false,
-  openCompanies:new Set(), openApps:new Set(), companyQuery:"", companySearchMode:false };
+  openCompanies:new Set(), openApps:new Set(), companyQuery:"", companySearchMode:false, defaultOnly:false,
+  totalPages:null };
 
 function splitCategory(raw){
   if(!raw) return {code:"", name:"—"};
@@ -424,6 +433,7 @@ async function loadCategories(district){
   while(true){
     let q = sb.from("v_waste_status").select("category");
     if(district !== "ALL") q = q.eq("district", district);
+    if(state.defaultOnly) q = q.eq("is_default", true);
     const { data: page, error: catErr } = await q.range(offset, offset + PAGE_SIZE - 1);
 
     if(catErr){
@@ -470,6 +480,7 @@ async function bootstrapApp(){
 
   setupCombo();
   setupSortToggle();
+  setupDefaultOnlyToggle();
   setupClearFilters();
   setupPagination();
   setupSearchButton();
@@ -551,6 +562,24 @@ function setupSortToggle(){
       btn.classList.add("active");
       if(hasSearched) render();
     });
+  });
+}
+
+/* ---------------- Default-categories-only toggle ----------------
+   When on, the category dropdown (via loadCategories) only offers categories where
+   is_default = TRUE, AND the ledger/company-search queries below add their own
+   .eq("is_default", true) clause — the latter matters even when no specific category
+   is selected (i.e. "all categories"), so that case still resolves to "all DEFAULT
+   categories" rather than silently including everything. */
+function setupDefaultOnlyToggle(){
+  const sw = document.getElementById("defaultOnlySwitch");
+  const label = document.getElementById("defaultOnlyLabel");
+  sw.addEventListener("click", async ()=>{
+    state.defaultOnly = !state.defaultOnly;
+    sw.classList.toggle("on", state.defaultOnly);
+    label.textContent = state.defaultOnly ? "On" : "Off";
+    label.classList.toggle("on", state.defaultOnly);
+    await loadCategories(state.district);
   });
 }
 
@@ -642,6 +671,7 @@ async function searchCompaniesAcrossDB(query){
     let q = sb.from("v_waste_status").select("*").ilike("company_name", `%${escaped}%`);
     if(state.district !== "ALL") q = q.eq("district", state.district);
     if(state.categories.size > 0 && !allCategoriesSelected) q = q.in("category", [...state.categories]);
+    if(state.defaultOnly) q = q.eq("is_default", true);
     const { data, error } = await q.range(offset, offset + PAGE_SIZE - 1);
 
     if(error){
@@ -682,6 +712,7 @@ function setupClearFilters(){
     state.openApps.clear();
     state.companyQuery = "";
     state.companySearchMode = false;
+    state.defaultOnly = false;
 
     document.getElementById("districtSelect").value = "ALL";
     document.getElementById("companySearchInput").value = "";
@@ -690,6 +721,11 @@ function setupClearFilters(){
     dirToggle.querySelectorAll(".dir-btn").forEach(b=>{
       b.classList.toggle("active", b.dataset.dir === "desc");
     });
+
+    document.getElementById("defaultOnlySwitch").classList.remove("on");
+    const defaultOnlyLabel = document.getElementById("defaultOnlyLabel");
+    defaultOnlyLabel.textContent = "Off";
+    defaultOnlyLabel.classList.remove("on");
 
     await loadCategories("ALL");   // also calls refreshCategoryUI() to clear tags
 
@@ -729,7 +765,13 @@ async function fetchAndRender(){
   // back empty and self-corrects by stepping back and disabling Next.
   const offset = state.page * MAX_ROWS;
   let query = sb.from("v_waste_status").select("*");
-  if(state.district !== "ALL") query = query.eq("district", state.district);
+  // head:true means only the count comes back, not another full copy of the rows —
+  // this is what lets the pager show "Page X/Y" without doubling the data transfer.
+  let countQuery = sb.from("v_waste_status").select("*", { count: "exact", head: true });
+  if(state.district !== "ALL"){
+    query = query.eq("district", state.district);
+    countQuery = countQuery.eq("district", state.district);
+  }
   // If every category currently available is selected (e.g. via "Select all matches"),
   // that's equivalent to no category filter at all — skip the .in() clause in that case.
   // Sending all 335 category names as URL query params (especially combined with ALL
@@ -737,15 +779,25 @@ async function fetchAndRender(){
   // which is what was causing the earlier "loading error".
   if(state.categories.size > 0 && !allCategoriesSelected){
     query = query.in("category", [...state.categories]);
+    countQuery = countQuery.in("category", [...state.categories]);
+  }
+  if(state.defaultOnly){
+    query = query.eq("is_default", true);
+    countQuery = countQuery.eq("is_default", true);
   }
 
-  const { data: rawRows, error } = await query.range(offset, offset + MAX_ROWS - 1); // exactly MAX_ROWS rows
+  const [{ data: rawRows, error }, { count, error: countErr }] = await Promise.all([
+    query.range(offset, offset + MAX_ROWS - 1), // exactly MAX_ROWS rows
+    countQuery,
+  ]);
 
   if(error){
     ledgerBody.innerHTML = `<div class="empty">Error loading data: ${error.message}</div>`;
     console.error(error);
     return;
   }
+
+  state.totalPages = (!countErr && typeof count === "number") ? Math.max(1, Math.ceil(count / MAX_ROWS)) : null;
 
   const rows = rawRows || [];
 
@@ -887,7 +939,9 @@ function renderPagination(){
   bar.style.display = "";
   prevBtn.disabled = state.page === 0;
   nextBtn.disabled = !state.hasNextPage;
-  label.textContent = `Page ${state.page + 1}`;
+  label.textContent = state.totalPages
+    ? `Page ${state.page + 1}/${state.totalPages}`
+    : `Page ${state.page + 1}`;
 }
 
 function itemQty(i){
